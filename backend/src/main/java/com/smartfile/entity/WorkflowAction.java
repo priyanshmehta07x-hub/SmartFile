@@ -1,0 +1,3 @@
+package com.smartfile.entity;
+import jakarta.persistence.*;import java.time.Instant;
+@Entity @Table(name="workflow_actions") public class WorkflowAction { @Id @GeneratedValue(strategy=GenerationType.IDENTITY) public Long id; @ManyToOne(optional=false) public SmartApplication application; public String actorEmail; public String action; @Column(length=2000) public String remarks; public Instant createdAt=Instant.now(); public WorkflowAction(){} public WorkflowAction(SmartApplication a,String actor,String action,String remarks){application=a;actorEmail=actor;this.action=action;this.remarks=remarks;} }

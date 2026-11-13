@@ -1,0 +1,1 @@
+package com.smartfile.repository;import com.smartfile.entity.WorkflowAction;import org.springframework.data.jpa.repository.JpaRepository;import java.util.List;public interface WorkflowActionRepository extends JpaRepository<WorkflowAction,Long>{List<WorkflowAction> findByApplicationFileIdOrderByCreatedAtAsc(String fileId);}
