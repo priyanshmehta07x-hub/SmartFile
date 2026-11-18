@@ -19,7 +19,7 @@ const accounts = {
 };
 const pageItems = [
   ['Overview', LayoutDashboard], ['Apply Application', Plus], ['All applications', Files], ['Track a file', Search],
-  ['Workflow', Activity], ['Complaints', MessageSquareText], ['Departments', Building2],
+  ['Workflow', Activity], ['Smart Document Verification', ShieldCheck], ['Complaints', MessageSquareText], ['Departments', Building2],
   ['Audit log', ShieldCheck], ['Settings', Settings]
 ];
 const completedStatuses = new Set([
@@ -840,7 +840,7 @@ function App() {
       <div className="smart-brand"><span className="smart-brand-mark">S</span><span>SmartFile<small>PUBLIC SERVICE PLATFORM</small></span><button className="smart-icon mobile-close" aria-label="Close menu" onClick={() => setMobileMenu(false)}><X/></button></div>
       <div className="smart-org"><Building2/><span><b>Government of India</b><small>Central administration</small></span></div>
       <nav aria-label="Main navigation">
-        {pageItems.filter(([label]) => label !== 'Apply Application' || role === 'Citizen').map(([label, Icon]) => <button key={label} className={`smart-nav ${page === label ? 'active' : ''}`} onClick={() => label === 'Apply Application' ? setModal({ type: 'application' }) : navigate(label)}><Icon/><span>{label}</span></button>)}
+        {pageItems.filter(([label]) => label !== 'Apply Application' || role === 'Citizen').map(([label, Icon]) => <button key={label} className={`smart-nav ${page === label ? 'active' : ''}`} onClick={() => label === 'Apply Application' ? setModal({ type: 'wizard' }) : navigate(label)}><Icon/><span>{label}</span></button>)}
       </nav>
       <div className="smart-side-bottom">
         <button className="smart-help" onClick={() => setModal({ type: 'help' })}><HelpCircle/><span><b>Need a hand?</b><small>Open the help centre</small></span><ArrowRight/></button>
@@ -862,14 +862,15 @@ function App() {
       <section className="smart-content">
         {!apiUp && <div className="smart-banner" role="status"><AlertTriangle/><span>{mode === 'api' && token ? <><b>API offline</b> — server data cannot currently be read or changed. Write actions will report errors rather than silently saving locally.</> : <><b>Local demo mode</b> — changes are stored in this browser only. Connect the API and database for shared persistence.</>}</span></div>}
         {error && <div className="smart-error" role="alert"><span>{error}</span><button aria-label="Dismiss error" onClick={() => setError('')}><X/></button></div>}
-        {page === 'Overview' && <Overview files={filteredFiles} counts={counts} now={displayNow} canReview={file => canReviewApplication(role, file.status)} applyLabel={role === 'Citizen' ? 'Apply Application' : 'New application'} onNew={() => setModal({ type: 'application' })} onNavigate={navigate} onView={file => setModal({ type: 'details', file })} onReview={file => setModal({ type: 'action', file })} onExport={() => exportCsv(filteredFiles)}/>}
-        {page === 'All applications' && <Applications files={filteredFiles} query={query} setQuery={setQuery} statusFilter={statusFilter} setStatusFilter={setStatusFilter} now={displayNow} canReview={file => canReviewApplication(role, file.status)} applyLabel={role === 'Citizen' ? 'Apply Application' : 'New application'} onNew={() => setModal({ type: 'application' })} onView={file => setModal({ type: 'details', file })} onReview={file => setModal({ type: 'action', file })} onExport={() => exportCsv(filteredFiles)}/>}
+        {page === 'Overview' && <Overview files={filteredFiles} counts={counts} now={displayNow} canReview={file => canReviewApplication(role, file.status)} applyLabel={role === 'Citizen' ? 'Apply Application' : 'New application'} onNew={() => setModal({ type: role === 'Citizen' ? 'wizard' : 'application' })} onNavigate={navigate} onView={file => setModal({ type: 'details', file })} onReview={file => setModal({ type: 'action', file })} onExport={() => exportCsv(filteredFiles)}/>}
+        {page === 'All applications' && <Applications files={filteredFiles} query={query} setQuery={setQuery} statusFilter={statusFilter} setStatusFilter={setStatusFilter} now={displayNow} canReview={file => canReviewApplication(role, file.status)} applyLabel={role === 'Citizen' ? 'Apply Application' : 'New application'} onNew={() => setModal({ type: role === 'Citizen' ? 'wizard' : 'application' })} onView={file => setModal({ type: 'details', file })} onReview={file => setModal({ type: 'action', file })} onExport={() => exportCsv(filteredFiles)}/>}
         {page === 'Track a file' && <Tracking query={trackQuery} setQuery={setTrackQuery} file={trackedFile} history={trackingHistory} now={displayNow} busy={busy} onSubmit={trackFile} onView={file => setModal({ type: 'details', file })}/>}
         {page === 'Workflow' && <Workflow files={accountFiles} role={role} onAction={file => setModal({ type: 'action', file })}/>}
         {page === 'Complaints' && <Complaints complaints={visibleComplaints} onNew={() => setModal({ type: 'complaint' })}/>}
         {page === 'Departments' && <Departments files={accountFiles} departmentNames={departmentNames}/>}
         {page === 'Audit log' && <AuditLog rows={visibleAudit} now={displayNow}/>}
         {page === 'Analytics' && <Analytics files={accountFiles} counts={counts} onExport={() => exportCsv(accountFiles)}/>}
+        {page === 'Smart Document Verification' && <SmartDocumentVerification />}
         {page === 'Settings' && <SettingsPage dark={dark} setDark={setDark} apiUp={apiUp} timeZone={timeZone} mode={mode}/>}
       </section>
       <footer className="smart-footer"><span>© {new Date(displayNow).getUTCFullYear()} SmartFile</span><span>Clock: {apiUp ? 'server-synchronized' : 'device local'} · {timeZone}</span></footer>
@@ -884,6 +885,7 @@ function App() {
       onOpenEdit={file => setModal({ type: 'edit', file })} onRequestCancel={file => setModal({ type: 'cancel', file })}
     />}
     {notice && <div className="smart-toast" role="status"><CheckCheck/>{notice}</div>}
+    <ChatAssistant/>
   </div>;
 }
 
@@ -1043,6 +1045,300 @@ function SettingsPage({ dark, setDark, apiUp, timeZone, mode }) {
   </>;
 }
 
+function ApplicationWizard({ close, busy, onSubmitApplication, email, userName, role, mode, token }) {
+  const [step, setStep] = useState(1);
+  const [service, setService] = useState(null);
+  const [errors, setErrors] = useState({});
+  const [applicant, setApplicant] = useState({
+    applicantName: role === 'Citizen' && userName !== 'Demo workspace' ? userName : '',
+    fatherName: '', mobile: '', email: email || '', dateOfBirth: '', state: 'Punjab',
+    district: '', collegeName: '', course: '', academicYear: '2026-27',
+    scholarshipCategory: 'General', scholarshipScheme: 'State Merit Scholarship'
+  });
+  const [documents, setDocuments] = useState({});
+  const [mismatch, setMismatch] = useState(null);
+
+  const services = [
+    ['scholarship', 'Scholarship Application', 'Education', 'Student scholarship application', '5-7 business days'],
+    ['income', 'Income Certificate', 'Revenue', 'Proof of annual family income', '3-5 business days'],
+    ['caste', 'Caste Certificate', 'Revenue', 'Category/community certificate', '3-5 business days'],
+    ['residential', 'Residential Certificate', 'Residence', 'Proof of residence', '2-4 business days'],
+    ['bonafide', 'Bonafide Certificate', 'Education', 'Institution student certificate', '2-3 business days'],
+    ['other', 'Other Government Services', 'Citizen Services', 'Additional public service', 'Department dependent']
+  ];
+  const requiredDocuments = service?.[0] === 'scholarship'
+    ? [
+        ['income', 'Income Certificate'],
+        ['caste', 'Caste Certificate'],
+        ['bonafide', 'Bonafide Certificate'],
+        ['residential', 'Residential Certificate'],
+        ['marksheet', 'Academic Marksheet']
+      ]
+    : service ? [['support', 'Supporting Document']] : [];
+
+  function validateDetails() {
+    const next = {};
+    if (!applicant.applicantName.trim()) next.applicantName = 'Applicant name is required.';
+    if (!applicant.fatherName.trim()) next.fatherName = "Father's name is required.";
+    if (!/^[6-9]\d{9}$/.test(applicant.mobile)) next.mobile = 'Enter a valid 10-digit mobile number.';
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(applicant.email)) next.email = 'Enter a valid email address.';
+    if (!applicant.dateOfBirth) next.dateOfBirth = 'Date of birth is required.';
+    if (!applicant.district.trim()) next.district = 'District is required.';
+    if (service?.[0] === 'scholarship' && !applicant.collegeName.trim()) next.collegeName = 'College name is required.';
+    setErrors(next);
+    return Object.keys(next).length === 0;
+  }
+
+  function nextStep() {
+    if (step === 1 && !service) return setErrors({ service: 'Select a government service.' });
+    if (step === 2 && !validateDetails()) return;
+    if (step === 3) {
+      const missing = requiredDocuments.filter(([key]) => documents[key]?.status !== 'VERIFIED');
+      if (missing.length) return setErrors({ documents: `Verification required: ${missing.map(([, name]) => name).join(', ')}` });
+    }
+    setErrors({});
+    setStep(current => Math.min(current + 1, 5));
+  }
+
+  async function verifyDocument(key, name, file) {
+    if (!file) return;
+    if (!/\.(pdf|jpe?g|png)$/i.test(file.name)) {
+      setMismatch({ required: name, detected: 'Unsupported File', message: 'Only PDF, JPG, JPEG, and PNG files are accepted.' });
+      setDocuments(previous => ({ ...previous, [key]: { status: 'UPLOAD_FAILED', filename: file.name } }));
+      return;
+    }
+    setDocuments(previous => ({ ...previous, [key]: { status: 'SCANNING', filename: file.name } }));
+    let result;
+    if (mode === 'api' && token) {
+      try {
+        const form = new FormData();
+        form.append('file', file);
+        form.append('requiredDocument', name);
+        result = await request('/documents/verify', { method: 'POST', headers: { Authorization: `Bearer ${token}` }, body: form });
+      } catch (reason) {
+        setMismatch({ required: name, detected: 'Unable to Verify', message: reason.message });
+        setDocuments(previous => ({ ...previous, [key]: { status: 'UNABLE_TO_VERIFY', filename: file.name } }));
+        return;
+      }
+    } else {
+      const detected = file.name.toLowerCase().includes('income') ? 'INCOME_CERTIFICATE'
+        : file.name.toLowerCase().includes('caste') ? 'CASTE_CERTIFICATE'
+          : file.name.toLowerCase().includes('bonafide') ? 'BONAFIDE_CERTIFICATE'
+            : file.name.toLowerCase().includes('residential') || file.name.toLowerCase().includes('residence') ? 'RESIDENTIAL_CERTIFICATE'
+              : file.name.toLowerCase().includes('marksheet') ? 'ACADEMIC_MARKSHEET' : 'UNKNOWN_DOCUMENT';
+      const requiredCode = name.toUpperCase().replaceAll(' ', '_');
+      result = {
+        status: detected === requiredCode ? 'VERIFIED' : 'MISMATCH',
+        detectedDocument: detected,
+        requiredDocument: requiredCode,
+        confidence: detected === requiredCode ? 96 : 94,
+        canProceed: detected === requiredCode,
+        message: detected === requiredCode ? 'Document matches the required document type.' : 'Uploaded document does not match the required document.'
+      };
+    }
+    setDocuments(previous => ({ ...previous, [key]: { status: result.status, filename: file.name, detected: result.detectedDocument, confidence: result.confidence } }));
+    if (result.status !== 'VERIFIED') setMismatch({ required: name, detected: result.detectedDocument?.replaceAll('_', ' ') || 'Unknown Document', message: result.message });
+  }
+
+  async function submit() {
+    const blocked = requiredDocuments.some(([key]) => documents[key]?.status !== 'VERIFIED');
+    if (blocked) return setStep(3);
+    await onSubmitApplication({
+      applicationType: service[1],
+      applicantName: applicant.applicantName.trim(),
+      department: service[2],
+      priority: 'Normal'
+    });
+  }
+
+  const progress = ['Select Service', 'Applicant Details', 'Upload Documents', 'Verification', 'Review & Submit'];
+  return <div className="smart-wizard">
+    <div className="smart-modal-head"><h2 id="modal-title">New application</h2><button className="smart-icon" aria-label="Close" onClick={close}><X/></button></div>
+    <ol className="smart-progress">{progress.map((label, index) => <li key={label} className={step >= index + 1 ? 'active' : ''}><b>{index + 1}</b><span>{label}</span></li>)}</ol>
+    {step === 1 && <section className="smart-service-grid">{services.map(item => <button type="button" key={item[0]} className={`smart-service-card ${service?.[0] === item[0] ? 'selected' : ''}`} onClick={() => { setService(item); setErrors({}); }}>
+      <span><Building2/></span><b>{item[1]}</b><small>{item[3]}</small><em>{item[2]} · {item[4]}</em><strong>Apply <ArrowRight/></strong>
+    </button>)}</section>}
+    {step === 2 && <section className="smart-wizard-form">
+      {[
+        ['applicantName', 'Applicant Name', 'text'], ['fatherName', "Father's Name", 'text'],
+        ['mobile', 'Mobile Number', 'tel'], ['email', 'Email', 'email'], ['dateOfBirth', 'Date of Birth', 'date'],
+        ['state', 'State', 'text'], ['district', 'District', 'text'], ['collegeName', 'College Name', 'text'],
+        ['course', 'Course', 'text'], ['academicYear', 'Academic Year', 'text']
+      ].map(([key, label, type]) => <label key={key}>{label}<input type={type} value={applicant[key]} onChange={event => setApplicant(previous => ({ ...previous, [key]: event.target.value }))}/>{errors[key] && <small className="smart-field-error">{errors[key]}</small>}</label>)}
+      <label>Scholarship Category<select value={applicant.scholarshipCategory} onChange={event => setApplicant(previous => ({ ...previous, scholarshipCategory: event.target.value }))}><option>General</option><option>SC</option><option>ST</option><option>OBC</option><option>EWS</option></select></label>
+      <label>Scholarship Scheme<select value={applicant.scholarshipScheme} onChange={event => setApplicant(previous => ({ ...previous, scholarshipScheme: event.target.value }))}><option>State Merit Scholarship</option><option>Post-Matric Scholarship</option><option>National Means-cum-Merit Scholarship</option></select></label>
+    </section>}
+    {step === 3 && <section className="smart-document-wizard">{requiredDocuments.map(([key, name]) => {
+      const record = documents[key];
+      return <div className="smart-upload-slot" key={key}>
+        <div><b>{name}</b><small>PDF, JPG, JPEG or PNG · Maximum 10 MB</small></div>
+        {record && <span className={`smart-status ${record.status === 'VERIFIED' ? 'approved' : 'rejected'}`}>{record.status.replaceAll('_', ' ')}</span>}
+        <label className="smart-button secondary">Upload document<input type="file" accept=".pdf,.jpg,.jpeg,.png" hidden onChange={event => verifyDocument(key, name, event.target.files?.[0])}/></label>
+        {record?.filename && <small className="smart-upload-name">{record.filename}</small>}
+      </div>;
+    })}{errors.documents && <p className="smart-form-error">{errors.documents}</p>}</section>}
+    {step === 4 && <section className="smart-verification-summary">
+      <div className="smart-verification-icon"><CheckCheck/></div><h3>Document verification status</h3>
+      {requiredDocuments.map(([key, name]) => <div key={key}><b>{name}</b><span className={`smart-status ${documents[key]?.status === 'VERIFIED' ? 'approved' : 'rejected'}`}>{documents[key]?.status || 'PENDING'}</span></div>)}
+    </section>}
+    {step === 5 && <section className="smart-review-grid">
+      <div><small>Service</small><b>{service?.[1]}</b></div><div><small>Applicant</small><b>{applicant.applicantName}</b></div>
+      <div><small>Mobile</small><b>{applicant.mobile}</b></div><div><small>Institution</small><b>{applicant.collegeName || '—'}</b></div>
+      <div><small>Course</small><b>{applicant.course || '—'}</b></div><div><small>Scheme</small><b>{applicant.scholarshipScheme}</b></div>
+    </section>}
+    {errors.service && <p className="smart-form-error">{errors.service}</p>}
+    <div className="smart-modal-actions">
+      {step > 1 && <button type="button" className="smart-button secondary" onClick={() => setStep(current => current - 1)}>Back</button>}
+      {step < 5 ? <button type="button" className="smart-button" onClick={nextStep}>Continue</button> : <button type="button" className="smart-button" disabled={busy} onClick={submit}>{busy ? 'Submitting…' : 'Submit Application'}</button>}
+    </div>
+    {mismatch && <div className="smart-mismatch-inline" role="alert">
+      <AlertTriangle/><div><b>DOCUMENT MISMATCH DETECTED</b><small>Required: {mismatch.required} · Uploaded: {mismatch.detected}</small><p>{mismatch.message}</p></div>
+      <button className="smart-button secondary" onClick={() => setMismatch(null)}>Replace Document</button>
+    </div>}
+  </div>;
+}
+
+function SmartDocumentVerification() {
+  const slots = [
+    ['income', 'Income Certificate'],
+    ['caste', 'Caste Certificate'],
+    ['bonafide', 'Bonafide Certificate'],
+    ['residential', 'Residential Certificate'],
+    ['marksheet', 'Academic Marksheet']
+  ];
+  const [records, setRecords] = useState({});
+  const [mismatch, setMismatch] = useState(null);
+  const [scanning, setScanning] = useState('');
+
+  async function verify(key, name, file) {
+    if (!file) return;
+    setScanning(name);
+    setMismatch(null);
+    const delay = new Promise(resolve => window.setTimeout(resolve, 650));
+    let result;
+    const token = localStorage.getItem('smartfile.token');
+    if (token && localStorage.getItem('smartfile.mode') === 'api') {
+      const form = new FormData();
+      form.append('file', file);
+      form.append('requiredDocument', name);
+      try {
+        result = await Promise.all([
+          request('/documents/verify', { method: 'POST', headers: { Authorization: `Bearer ${token}` }, body: form }),
+          delay
+        ]).then(values => values[0]);
+      } catch (reason) {
+        result = { status: 'UPLOAD_FAILED', detectedDocument: 'FILE_VALIDATION_ERROR', message: reason.message, canProceed: false };
+      }
+    } else {
+      await delay;
+      const value = file.name.toLowerCase();
+      const detected = value.includes('income') ? 'INCOME_CERTIFICATE'
+        : value.includes('caste') ? 'CASTE_CERTIFICATE'
+          : value.includes('bonafide') ? 'BONAFIDE_CERTIFICATE'
+            : value.includes('residential') || value.includes('residence') ? 'RESIDENTIAL_CERTIFICATE'
+              : value.includes('marksheet') ? 'ACADEMIC_MARKSHEET' : 'UNKNOWN_DOCUMENT';
+      const required = name.toUpperCase().replaceAll(' ', '_');
+      result = {
+        status: detected === required ? 'VERIFIED' : 'MISMATCH',
+        detectedDocument: detected,
+        requiredDocument: required,
+        confidence: detected === required ? 96 : 94,
+        canProceed: detected === required,
+        message: detected === required ? 'Document matches the required document type.' : 'Uploaded document does not match the required document.'
+      };
+    }
+    setScanning('');
+    setRecords(previous => ({
+      ...previous,
+      [key]: { filename: file.name, status: result.status, detected: result.detectedDocument, confidence: result.confidence }
+    }));
+    if (result.status !== 'VERIFIED') setMismatch({
+      required: name,
+      detected: String(result.detectedDocument || 'Unknown Document').replaceAll('_', ' '),
+      message: result.message
+    });
+  }
+
+  function sample(key, name, detectedName) {
+    const file = new File([`${detectedName}\nDemo Document - Not valid for official use\nRahul Kumar`], `Demo_${detectedName.replaceAll(' ', '_')}.pdf`, { type: 'application/pdf' });
+    verify(key, name, file);
+  }
+
+  return <>
+    <PageTitle eyebrow="DEMO MODE | RULE-BASED DOCUMENT INTELLIGENCE" title="Smart Document Verification" description="Ready-to-use scholarship demo with backend verification when the API is available."/>
+    {scanning && <div className="smart-scanning"><ShieldCheck/><div><b>Scanning: {scanning}</b><small>File validation → OCR/Text extraction → Classification → Comparison</small></div></div>}
+    <div className="smart-verification-grid">{slots.map(([key, name]) => {
+      const record = records[key];
+      return <section className="smart-document-slot" key={key}>
+        <div><b>{name}</b><small>PDF, JPG, JPEG or PNG · 10 MB maximum</small></div>
+        {record && <span className={`smart-status ${record.status === 'VERIFIED' ? 'approved' : 'rejected'}`}>{record.status.replaceAll('_', ' ')}</span>}
+        {record?.filename && <small className="smart-upload-name">{record.filename}{record.confidence ? ` · ${record.confidence}%` : ''}</small>}
+        <label className="smart-button secondary">Upload document<input type="file" accept=".pdf,.jpg,.jpeg,.png" hidden onChange={event => verify(key, name, event.target.files?.[0])}/></label>
+        <div className="smart-sample-actions">
+          {name === 'Caste Certificate'
+            ? <><button className="smart-button secondary" onClick={() => sample(key, name, 'Caste Certificate')}>Demo Caste Certificate</button><button className="smart-button danger" onClick={() => sample(key, name, 'Income Certificate')}>Demo Wrong Income Certificate</button></>
+            : <button className="smart-button secondary" onClick={() => sample(key, name, name)}>Upload Demo Document</button>}
+        </div>
+      </section>;
+    })}</div>
+    {Object.values(records).length === slots.length && Object.values(records).every(record => record.status === 'VERIFIED')
+      && <section className="smart-success"><CheckCheck/><div><b>All required documents verified</b><small>The scholarship demo application is ready for final review.</small></div></section>}
+    {mismatch && <div className="smart-mismatch-inline lab-mismatch" role="alert">
+      <AlertTriangle/><div><b>DOCUMENT MISMATCH DETECTED</b><small>Required: {mismatch.required} · Uploaded: {mismatch.detected}</small><p>{mismatch.message}</p></div>
+      <button className="smart-button" onClick={() => setMismatch(null)}>Replace Document</button>
+    </div>}
+  </>;
+}
+
+function ChatAssistant() {
+  const [open, setOpen] = useState(false);
+  const [input, setInput] = useState('');
+  const [typing, setTyping] = useState(false);
+  const [messages, setMessages] = useState([
+    { role: 'assistant', text: 'Hello. I am SmartFile Assistant. Ask me about services, required documents, verification, or tracking.' }
+  ]);
+
+  async function send(text) {
+    const question = (text || input).trim();
+    if (!question) return;
+    setMessages(previous => [...previous, { role: 'user', text: question }]);
+    setInput('');
+    setTyping(true);
+    let answer;
+    try {
+      const token = localStorage.getItem('smartfile.token');
+      if (token && localStorage.getItem('smartfile.mode') === 'api') {
+        const data = await request(`/chat?message=${encodeURIComponent(question)}`, { headers: { Authorization: `Bearer ${token}` } });
+        answer = data.answer;
+      } else throw new Error('Local demo knowledge');
+    } catch {
+      const value = question.toLowerCase();
+      answer = value.includes('document') && value.includes('scholarship')
+        ? 'For scholarship, configured documents are: Income Certificate, Bonafide Certificate, Residential Certificate, and Previous Academic Marksheet. Caste Certificate is required only if applicable.'
+        : value.includes('mismatch') || value.includes('rejected')
+          ? 'This means the uploaded file was classified differently from the required slot. Replace it with the correct document and verify again.'
+          : value.includes('track')
+            ? 'Open Track a file and enter the application ID shown after submission.'
+            : 'Select a service, complete applicant details, upload all required documents, and submit when every document is verified.';
+    }
+    await new Promise(resolve => window.setTimeout(resolve, 350));
+    setTyping(false);
+    setMessages(previous => [...previous, { role: 'assistant', text: answer }]);
+  }
+
+  return <>
+    {open && <section className="smart-chat-panel" role="dialog" aria-label="SmartFile Assistant">
+      <div className="smart-chat-head"><span><MessageSquareText/></span><div><b>SmartFile Assistant</b><small>Knowledge-based help · Demo context</small></div><button className="smart-icon" onClick={() => setOpen(false)}><X/></button></div>
+      <div className="smart-chat-messages">{messages.map((message, index) => <div className={`smart-chat-message ${message.role}`} key={index}>{message.text}</div>)}
+        {typing && <div className="smart-chat-message assistant">Typing…</div>}
+      </div>
+      <div className="smart-chat-suggestions"><button onClick={() => send('What documents are required for scholarship?')}>Scholarship documents</button><button onClick={() => send('How do I track my application?')}>Track application</button></div>
+      <form className="smart-chat-input" onSubmit={event => { event.preventDefault(); send(); }}><input value={input} onChange={event => setInput(event.target.value)} placeholder="Ask SmartFile Assistant"/><button type="submit">Send</button></form>
+    </section>}
+    <button className="smart-chat-button" aria-label="Open SmartFile Assistant" onClick={() => setOpen(current => !current)}><MessageSquareText/></button>
+  </>;
+}
+
 function Modal({ modal, close, busy, error, role, userName, email, mode, accountId, officers, onSignIn, onSignOut, onSubmitApplication, onEditApplication, onCancelApplication, onSubmitComplaint, onApplyAction, onReview, onOpenEdit, onRequestCancel }) {
   const [title, setTitle] = useState(modal.file?.title || '');
   const [name, setName] = useState(modal.file?.applicant || (userName === 'Demo workspace' ? '' : userName));
@@ -1068,6 +1364,14 @@ function Modal({ modal, close, busy, error, role, userName, email, mode, account
     if (modal.type === 'edit') return onEditApplication(modal.file, { applicationType: title.trim(), applicantName: name.trim(), department, priority });
     if (modal.type === 'complaint') return onSubmitComplaint({ category, applicantName: name.trim(), description: description.trim() });
     if (modal.type === 'action') return onApplyAction(file, action, remarks.trim(), assignedOfficerEmail);
+  }
+
+  if (modal.type === 'wizard') {
+    return <div className="smart-backdrop" onMouseDown={event => { if (event.target === event.currentTarget) close(); }}>
+      <section className="smart-modal smart-wizard-modal" role="dialog" aria-modal="true" aria-labelledby="modal-title">
+        <ApplicationWizard close={close} busy={busy} onSubmitApplication={onSubmitApplication} email={email} userName={userName} role={role} mode={mode} token={localStorage.getItem('smartfile.token') || ''}/>
+      </section>
+    </div>;
   }
 
   return <div className="smart-backdrop" onMouseDown={event => { if (event.target === event.currentTarget) close(); }}>

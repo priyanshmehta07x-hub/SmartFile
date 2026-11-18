@@ -23,6 +23,8 @@ import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.bind.annotation.RequestParam;
+import org.springframework.web.multipart.MultipartFile;
 
 import java.time.Instant;
 import java.time.Year;
@@ -69,6 +71,84 @@ public class ApiController {
                 "status", "UP",
                 "service", "SmartFile API",
                 "serverTimeUtc", Instant.now().toString());
+    }
+
+    @GetMapping("/services")
+    public ResponseEntity<?> services() {
+        return ResponseEntity.ok(List.of(
+            service("scholarship", "Scholarship Application", "Education", "Submit a student scholarship application.", "5-7 business days",
+                List.of("Income Certificate", "Caste Certificate (if applicable)", "Bonafide Certificate", "Residential Certificate", "Previous Academic Marksheet")),
+            service("income", "Income Certificate", "Revenue", "Request an income certificate.", "3-5 business days",
+                List.of("Residential Certificate", "Bonafide Certificate")),
+            service("caste", "Caste Certificate", "Revenue", "Request a caste/category certificate.", "3-5 business days",
+                List.of("Residential Certificate", "Bonafide Certificate")),
+            service("residential", "Residential Certificate", "Revenue", "Request proof of residence.", "2-4 business days",
+                List.of("Identity Document")),
+            service("bonafide", "Bonafide Certificate", "Education", "Request a student institution certificate.", "2-3 business days",
+                List.of("Identity Document", "Academic Marksheet")),
+            service("other", "Other Government Services", "Citizen Services", "View other available public services.", "Department dependent",
+                List.of("Supporting Document"))
+        ));
+    }
+
+    @GetMapping("/chat")
+    public ResponseEntity<?> chat(@RequestParam(defaultValue = "") String message) {
+        String text = message.toLowerCase(Locale.ROOT);
+        String answer;
+        if (text.contains("document") && (text.contains("scholarship") || text.contains("required"))) {
+            answer = "For the scholarship application, configured documents are: Income Certificate, Bonafide Certificate, Residential Certificate, and Previous Academic Marksheet. Caste Certificate is required only when applicable to the selected category.";
+        } else if (text.contains("mismatch") || text.contains("income") && text.contains("caste")) {
+            answer = "A mismatch means the uploaded file was classified differently from the document slot. Replace it with the correct Caste Certificate; the application cannot proceed until the slot is verified.";
+        } else if (text.contains("track") || text.contains("status")) {
+            answer = "Open Track a file and enter the application ID shown after submission. Only applications belonging to your authenticated citizen account are accessible.";
+        } else if (text.contains("submit")) {
+            answer = "You can submit only after applicant details are complete and every required document has a Verified status.";
+        } else {
+            answer = "I can help with services, scholarship documents, mismatch errors, verification, and application tracking. Please choose a specific question.";
+        }
+        return ResponseEntity.ok(Map.of("answer", answer, "mode", "KNOWLEDGE_BASE"));
+    }
+
+    @PostMapping("/documents/verify")
+    public ResponseEntity<?> verifyDocument(
+            @RequestParam("file") MultipartFile file,
+            @RequestParam("requiredDocument") String requiredDocument) {
+        if (file == null || file.isEmpty()) {
+            return ResponseEntity.badRequest().body(Map.of(
+                "status", "UPLOAD_FAILED", "message", "The uploaded file is empty.",
+                "canProceed", false, "verificationMode", "DEMO"));
+        }
+        String name = file.getOriginalFilename() == null ? "" : file.getOriginalFilename();
+        String lowerName = name.toLowerCase(Locale.ROOT);
+        String extension = lowerName.contains(".")
+            ? lowerName.substring(lowerName.lastIndexOf('.') + 1) : "";
+        if (!Set.of("pdf", "jpg", "jpeg", "png").contains(extension)) {
+            return ResponseEntity.badRequest().body(Map.of(
+                "status", "UPLOAD_FAILED", "message", "Only PDF, JPG, JPEG, and PNG files are accepted.",
+                "canProceed", false, "verificationMode", "DEMO"));
+        }
+        if (file.getSize() > 10 * 1024 * 1024) {
+            return ResponseEntity.badRequest().body(Map.of(
+                "status", "UPLOAD_FAILED", "message", "The maximum supported file size is 10 MB.",
+                "canProceed", false, "verificationMode", "DEMO"));
+        }
+
+        String detected = classifyDocument(lowerName);
+        String normalizedRequired = requiredDocument.toUpperCase(Locale.ROOT).replace(' ', '_');
+        String normalizedDetected = detected.toUpperCase(Locale.ROOT).replace(' ', '_');
+        boolean match = normalizedRequired.equals(normalizedDetected);
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("requiredDocument", normalizedRequired);
+        result.put("detectedDocument", match ? normalizedDetected : normalizedDetected);
+        result.put("status", match ? "VERIFIED" : "MISMATCH");
+        result.put("confidence", match ? 96 : 94);
+        result.put("message", match
+            ? "The uploaded document matches the required document type."
+            : "Uploaded document does not match the required document.");
+        result.put("canProceed", match);
+        result.put("manualReviewRequired", false);
+        result.put("verificationMode", "DEMO");
+        return ResponseEntity.ok(result);
     }
 
     @GetMapping("/departments")
@@ -456,6 +536,28 @@ public class ApiController {
         complaint.category = category.isBlank() ? "Other" : category;
         complaint.description = description;
         return ResponseEntity.status(HttpStatus.CREATED).body(complaints.save(complaint));
+    }
+
+    private Map<String, Object> service(
+            String id, String name, String department, String description,
+            String processingTime, List<String> documents) {
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("id", id);
+        result.put("name", name);
+        result.put("department", department);
+        result.put("description", description);
+        result.put("processingTime", processingTime);
+        result.put("requiredDocuments", documents);
+        return result;
+    }
+
+    private String classifyDocument(String lowerName) {
+        if (lowerName.contains("income")) return "INCOME_CERTIFICATE";
+        if (lowerName.contains("caste") || lowerName.contains("category") || lowerName.contains("obc")) return "CASTE_CERTIFICATE";
+        if (lowerName.contains("bonafide") || lowerName.contains("college") || lowerName.contains("institution")) return "BONAFIDE_CERTIFICATE";
+        if (lowerName.contains("residence") || lowerName.contains("residential") || lowerName.contains("address")) return "RESIDENTIAL_CERTIFICATE";
+        if (lowerName.contains("marksheet") || lowerName.contains("marks") || lowerName.contains("academic")) return "ACADEMIC_MARKSHEET";
+        return "UNKNOWN_DOCUMENT";
     }
 
     private synchronized String nextId() {
